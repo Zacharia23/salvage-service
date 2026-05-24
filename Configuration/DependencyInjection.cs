@@ -56,7 +56,7 @@ public static class DependencyInjection
             config.SetDataCompatibilityLevel(CompatibilityLevel.Version_180);
             config.UseSimpleAssemblyNameTypeSerializer();
             config.UseRecommendedSerializerSettings();
-            config.UsePostgreSqlStorage(configuration.GetConnectionString("HangfireConnection"));
+            config.UsePostgreSqlStorage(configuration.GetConnectionString("HangfireMain"));
         });
 
         // Hangfire Server

@@ -73,7 +73,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("GEN_SERVER", policyBuilder =>
     {
-        policyBuilder.WithOrigins("https://office.smartsalvagetz.com", "http://localhost:3000", "https://smartsalvagetz.com");
+        policyBuilder.SetIsOriginAllowed(_ => true);
         policyBuilder.AllowAnyHeader();
         policyBuilder.AllowAnyMethod();
         policyBuilder.AllowCredentials();
