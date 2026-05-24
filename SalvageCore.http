@@ -1,0 +1,6 @@
+@SalvageCore_HostAddress = http://localhost:5199
+
+GET {{SalvageCore_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

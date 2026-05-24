@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Asp.Versioning.Mvc" Version="10.0.0"/>
+        <PackageReference Include="Asp.Versioning.Mvc.ApiExplorer" Version="10.0.0"/>
+        <PackageReference Include="Azure.Identity" Version="1.21.0"/>
+        <PackageReference Include="CloudinaryDotNet" Version="1.29.1" />
+        <PackageReference Include="EFCore.BulkExtensions" Version="10.0.1"/>
+        <PackageReference Include="EntityFrameworkCore.Exceptions.PostgreSQL" Version="10.0.0"/>
+        <PackageReference Include="EntityFrameworkCore.Exceptions.SqlServer" Version="10.0.0"/>
+        <PackageReference Include="Hangfire" Version="1.8.23"/>
+        <PackageReference Include="Hangfire.Dashboard.Basic.Authentication" Version="8.0.0"/>
+        <PackageReference Include="Hangfire.PostgreSql" Version="1.21.1"/>
+        <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.8" />
+        <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.8" />
+        <PackageReference Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" Version="10.0.8" />
+        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.8" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.8" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.8">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+        <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.8" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.8">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+        <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.8" />
+        <PackageReference Include="Microsoft.FeatureManagement" Version="4.5.0" />
+        <PackageReference Include="Microsoft.Identity.Client" Version="4.84.1" />
+        <PackageReference Include="Npgsql" Version="10.0.2"/>
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.1"/>
+        <PackageReference Include="Scalar.AspNetCore" Version="2.14.14" />
+        <PackageReference Include="Serilog.AspNetCore" Version="10.0.0"/>
+        <PackageReference Include="Serilog.Sinks.Grafana.Loki" Version="8.3.2"/>
+        <PackageReference Include="Serilog.Sinks.Seq" Version="9.1.0" />
+        <PackageReference Include="StackExchange.Redis" Version="2.13.1" />
+        <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <Content Include="..\.dockerignore">
+            <Link>.dockerignore</Link>
+        </Content>
+    </ItemGroup>
+
+    <ItemGroup>
+        <Folder Include="Attributes\"/>
+        <Folder Include="Document\"/>
+        <Folder Include="Logs\"/>
+        <Folder Include="Migrations\"/>
+        <Folder Include="Validators\"/>
+    </ItemGroup>
+
+</Project>
