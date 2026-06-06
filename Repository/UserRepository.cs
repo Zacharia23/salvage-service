@@ -16,12 +16,17 @@ namespace SalvageCore.Repository;
 public class UserRepository : IUserRepository
 {
     private readonly ApplicationDbContext _context;
+    private readonly RoleManager<IdentityRole> _roleManager;
     private readonly UserManager<ApplicationUser> _userManager;
 
-    public UserRepository(ApplicationDbContext context, UserManager<ApplicationUser> userManager)
+    public UserRepository(
+        ApplicationDbContext context,
+        UserManager<ApplicationUser> userManager,
+        RoleManager<IdentityRole> roleManager)
     {
         _context = context;
         _userManager = userManager;
+        _roleManager = roleManager;
     }
 
     public async Task<ServiceResponse<ICollection<UserListResponse>>> FetchUsers()
@@ -92,67 +97,111 @@ public class UserRepository : IUserRepository
 
     public async Task<ServiceResponse<SystemUser>> RegisterUser(UserRequest user)
     {
-        using (var transaction = await _context.Database.BeginTransactionAsync())
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        var transactionCompleted = false;
+
+        try
         {
+            var email = user.Email.Trim().ToLowerInvariant();
+            var phone = user.Phone.Trim();
+            var role = user.Role.Trim();
+
+            if (!await _roleManager.RoleExistsAsync(role))
+                return ServiceResponse.Failure<SystemUser>(
+                    "The selected role does not exist.",
+                    new List<string> { "INVALID_ROLE" });
+
+            if (role.Equals("Customer", StringComparison.OrdinalIgnoreCase))
+                return ServiceResponse.Failure<SystemUser>(
+                    "Customer accounts must use the customer registration flow.",
+                    new List<string> { "INVALID_USER_ROLE" });
+
+            var emailExists = await _userManager.FindByEmailAsync(email) is not null;
+            var phoneExists = await _userManager.Users.AnyAsync(item => item.PhoneNumber == phone);
+            if (emailExists || phoneExists)
+                return ServiceResponse.Failure<SystemUser>(
+                    "A user with the supplied email or phone already exists.",
+                    new List<string> { "USER_ALREADY_EXISTS" });
+
+            var newUser = new SystemUser
+            {
+                Username = user.Username.Trim(),
+                Number = NumberGenerator.GenerateUserNumber(),
+                Email = email,
+                Phone = phone,
+                Address = user.Address.Trim(),
+                Role = role,
+                AccountVerified = true
+            };
+
+            await _context.SystemUsers.AddAsync(newUser);
+
+            var appUser = new ApplicationUser
+            {
+                UserName = email,
+                Email = email,
+                PhoneNumber = phone,
+                SystemUserId = newUser.SystemUserId,
+                Domain = "SystemUser",
+                EmailConfirmed = true,
+                PhoneNumberConfirmed = true
+            };
+
+            var createdUser = await _userManager.CreateAsync(appUser, user.Password);
+            if (!createdUser.Succeeded)
+            {
+                return ServiceResponse.Failure<SystemUser>(
+                    "Failed to create user account.",
+                    createdUser.Errors.Select(error => $"{error.Code}: {error.Description}").ToList());
+            }
+
+            var roleResult = await _userManager.AddToRoleAsync(appUser, role);
+            if (!roleResult.Succeeded)
+            {
+                return ServiceResponse.Failure<SystemUser>(
+                    "Failed to assign the selected role.",
+                    roleResult.Errors.Select(error => $"{error.Code}: {error.Description}").ToList());
+            }
+
+            await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
+            transactionCompleted = true;
+
             try
             {
-                var number = NumberGenerator.GenerateUserNumber();
+                var smsJob = BackgroundJob.Enqueue<INotificationService>(
+                    service => service.SendCredentialsMessage(user.Password, phone, email));
+                BackgroundJob.Enqueue<INotificationService>(
+                    service => service.SendCredentialsEmail(email, user.Password));
 
-                var newUser = new SystemUser
-                {
-                    Username = user.Username,
-                    Number = number,
-                    Email = user.Email,
-                    Phone = user.Phone,
-                    Address = user.Address,
-                    Role = user.Role
-                };
-
-                await _context.SystemUsers.AddAsync(newUser);
-
-                var appuser = new ApplicationUser
-                {
-                    UserName = user.Email,
-                    Email = user.Email,
-                    PhoneNumber = user.Phone,
-                    SystemUserId = newUser.SystemUserId,
-                    Domain = "SystemUser"
-                };
-
-                // Generated Password
-                var generator = new PasswordGenerator();
-                var password = await generator.Generate();
-
-                // Create user using SignIn Manager
-                var createdUser = await _userManager.CreateAsync(appuser, user.Password);
-                Log.Information("Generated Password => {@password} : {@email}", user.Password, appuser.Email);
-
-                if (!createdUser.Succeeded)
-                {
-                    Log.Error("Failed to register user: {@email}", appuser.Email);
-                    return ServiceResponse.Failure<SystemUser>($"Failed to register user {user.Email}");
-                }
-
-                // Add user to role
-                await _userManager.AddToRoleAsync(appuser, user.Role);
-
-                // Send SMS to registered user 
-                var smsJob = BackgroundJob.Enqueue<INotificationService>(x => x.SendCredentialsMessage(user.Password, user.Phone, user.Email));
-                var emailJob = BackgroundJob.Enqueue<INotificationService>(x => x.SendCredentialsEmail(user.Email, user.Password));
-
-                Log.Information("Send Registration Message JobId => {@jobId}", smsJob);
-
-                await _context.SaveChangesAsync();
-                await transaction.CommitAsync();
-
-                return ServiceResponse.Success(newUser, "User Created Successfully");
+                Log.Information("User registration notification queued. JobId: {JobId}", smsJob);
             }
-            catch (Exception exception)
+            catch (Exception notificationException)
             {
-                await transaction.RollbackAsync();
-                Log.Error("Failed to register user => {@exception}", exception.Message);
-                return ServiceResponse.Failure<SystemUser>($"Failed to register user: {exception.Message}");
+                Log.Warning(notificationException, "User created, but registration notification could not be queued.");
             }
+
+            return ServiceResponse.Success(newUser, "User created successfully.");
+        }
+        catch (Exception exception)
+        {
+            Log.Error(exception, "Failed to register user.");
+
+            if (!transactionCompleted)
+            {
+                try
+                {
+                    await transaction.RollbackAsync();
+                }
+                catch (Exception rollbackException)
+                {
+                    Log.Error(rollbackException, "Failed to roll back user registration.");
+                }
+            }
+
+            return ServiceResponse.Failure<SystemUser>(
+                "Failed to register user.",
+                new List<string> { exception.Message });
         }
     }
 

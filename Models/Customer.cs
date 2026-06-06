@@ -5,6 +5,8 @@ namespace SalvageCore.Models;
 public class Customer
 {
     public Guid Id { get; set; } = Guid.CreateVersion7();
+    public string? ApplicationUserId { get; set; }
+    public virtual ApplicationUser? ApplicationUser { get; set; }
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;

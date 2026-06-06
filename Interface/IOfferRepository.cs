@@ -27,4 +27,5 @@ public interface IOfferRepository
     public Task<ServiceResponse<bool>> Subscribe(SubscribeRequest request);
     public Task<ServiceResponse<bool>> Unsubscribe(SubscribeRequest request);
     public Task<ServiceResponse<bool>> CheckSubscriptionStatus(CheckSubscription request);
+    public Task<ServiceResponse<OfferStatisticsResponse>> FetchStatistics();
 }

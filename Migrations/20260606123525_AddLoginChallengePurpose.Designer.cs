@@ -12,15 +12,15 @@ using SalvageCore.Data;
 namespace SalvageCore.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20260422022106_InitialMigration")]
-    partial class InitialMigration
+    [Migration("20260606123525_AddLoginChallengePurpose")]
+    partial class AddLoginChallengePurpose
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.7")
+                .HasAnnotation("ProductVersion", "10.0.8")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -415,6 +415,9 @@ namespace SalvageCore.Migrations
                     b.Property<bool>("AccountVerified")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("ApplicationUserId")
+                        .HasColumnType("text");
+
                     b.Property<DateTime?>("BirthDate")
                         .HasColumnType("timestamp with time zone");
 
@@ -460,7 +463,16 @@ namespace SalvageCore.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ApplicationUserId")
+                        .IsUnique();
+
+                    b.HasIndex("Email")
+                        .IsUnique();
+
                     b.HasIndex("IdentityTypeId");
+
+                    b.HasIndex("Phone")
+                        .IsUnique();
 
                     b.HasIndex("RegionId");
 
@@ -907,6 +919,15 @@ namespace SalvageCore.Migrations
 
                     b.HasKey("SystemUserId");
 
+                    b.HasIndex("Email")
+                        .IsUnique();
+
+                    b.HasIndex("Number")
+                        .IsUnique();
+
+                    b.HasIndex("Phone")
+                        .IsUnique();
+
                     b.ToTable("SystemUsers");
                 });
 
@@ -916,33 +937,30 @@ namespace SalvageCore.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<DateTime?>("CreatedDate")
+                    b.Property<string>("ApplicationUserId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ConsumedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedDate")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Email")
-                        .HasColumnType("text");
-
-                    b.Property<string>("FirstName")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<bool>("IsSmsSent")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("LastName")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<DateTime>("LastSentAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("OtpAttempts")
                         .HasColumnType("integer");
 
-                    b.Property<string>("OtpCode")
-                        .HasColumnType("text");
-
                     b.Property<DateTime>("OtpExpiry")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("Password")
+                    b.Property<string>("OtpHash")
                         .IsRequired()
                         .HasColumnType("text");
 
@@ -950,11 +968,12 @@ namespace SalvageCore.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<string>("Username")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("Purpose")
+                        .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ApplicationUserId");
 
                     b.ToTable("TempCustomers");
                 });
@@ -1214,6 +1233,11 @@ namespace SalvageCore.Migrations
 
             modelBuilder.Entity("SalvageCore.Models.Customer", b =>
                 {
+                    b.HasOne("SalvageCore.Models.ApplicationUser", "ApplicationUser")
+                        .WithOne()
+                        .HasForeignKey("SalvageCore.Models.Customer", "ApplicationUserId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.HasOne("SalvageCore.Models.IdentityType", "IdentityType")
                         .WithMany("Customers")
                         .HasForeignKey("IdentityTypeId")
@@ -1223,6 +1247,8 @@ namespace SalvageCore.Migrations
                         .WithMany("Customers")
                         .HasForeignKey("RegionId")
                         .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("ApplicationUser");
 
                     b.Navigation("IdentityType");
 

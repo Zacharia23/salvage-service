@@ -18,12 +18,18 @@ public static class DependencyInjection
     {
         services.AddIdentity<ApplicationUser, IdentityRole>(options =>
         {
-            options.Password.RequireDigit = false;
+            options.User.RequireUniqueEmail = true;
+            options.Password.RequireDigit = true;
             options.Password.RequireLowercase = false;
             options.Password.RequireUppercase = false;
             options.Password.RequireNonAlphanumeric = false;
-            options.Password.RequiredLength = 6;
-        }).AddEntityFrameworkStores<ApplicationDbContext>();
+            options.Password.RequiredLength = 4;
+            options.Password.RequiredUniqueChars = 1;
+            options.Lockout.AllowedForNewUsers = true;
+            options.Lockout.MaxFailedAccessAttempts = 5;
+            options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+        }).AddEntityFrameworkStores<ApplicationDbContext>()
+            .AddDefaultTokenProviders();
 
         services.AddAuthentication(options =>
         {
@@ -35,6 +41,7 @@ public static class DependencyInjection
                                 options.DefaultSignOutScheme = JwtBearerDefaults.AuthenticationScheme;
         }).AddJwtBearer(options =>
         {
+            options.MapInboundClaims = false;
             options.TokenValidationParameters = new TokenValidationParameters
             {
                 ValidateIssuer = true,
@@ -42,6 +49,10 @@ public static class DependencyInjection
                 ValidateAudience = true,
                 ValidAudience = configuration["JWT:Audience"],
                 ValidateIssuerSigningKey = true,
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.FromMinutes(1),
+                NameClaimType = "sub",
+                RoleClaimType = "role",
                 IssuerSigningKey = new SymmetricSecurityKey(
                     Encoding.UTF8.GetBytes(configuration["JWT:SigninKey"] ?? string.Empty)
                 )
@@ -76,6 +87,7 @@ public static class DependencyInjection
         services.AddScoped<IInvoiceRepository, InvoiceRepository>();
         services.AddScoped<IVerifyCodeService, VerifyCodeService>();
         services.AddScoped<IPdfService, PdfService>();
+        services.AddScoped<IPasswordHasher<TempCustomer>, PasswordHasher<TempCustomer>>();
 
         // services.AddTransient<IApiKeyValidation, ApiKeyValidation>();
         // services.AddScoped<ApiKeyAuthFilter>();

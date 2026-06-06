@@ -1,14 +1,11 @@
+using System.Security.Claims;
 using Asp.Versioning;
-using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.RateLimiting;
 using SalvageCore.DTOs.Customer.Request;
-using SalvageCore.DTOs.User;
-using SalvageCore.DTOs.User.Request;
 using SalvageCore.Extensions;
 using SalvageCore.Interface;
-using SalvageCore.Models;
-using Serilog;
 
 namespace SalvageCore.Controllers.v1;
 
@@ -17,86 +14,75 @@ namespace SalvageCore.Controllers.v1;
 [Route("api/v{version:apiVersion}/")]
 public class CustomerController : ControllerBase
 {
-    private readonly IVerifyCodeService _codeService;
     private readonly ICustomerRepository _customerRepository;
-    private readonly INotificationService _notificationService;
     private readonly IOfferRepository _offerRepository;
-    private readonly IRedisCacheService _redisCacheService;
-    private readonly SignInManager<ApplicationUser> _signInManager;
-    private readonly ITokenService _tokenService;
-    private readonly UserManager<ApplicationUser> _userManager;
-    private readonly IUserRepository _userRepository;
 
-    public CustomerController(IUserRepository userRepository, UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager, ITokenService tokenService,
-        ICustomerRepository customerRepository, IOfferRepository offerRepository, IRedisCacheService redisCacheService, IVerifyCodeService codeService, INotificationService notificationService)
+    public CustomerController(
+        ICustomerRepository customerRepository,
+        IOfferRepository offerRepository)
     {
-        _userRepository = userRepository;
-        _userManager = userManager;
-        _signInManager = signInManager;
-        _tokenService = tokenService;
         _customerRepository = customerRepository;
         _offerRepository = offerRepository;
-        _redisCacheService = redisCacheService;
-        _codeService = codeService;
-        _notificationService = notificationService;
     }
 
     [HttpPost]
     [Route("[Controller]/RegisterCustomer")]
+    [AllowAnonymous]
+    [EnableRateLimiting("customer-auth")]
     public async Task<IActionResult> RegisterCustomerAction([FromBody] CustomerRequest customer)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
 
         var result = await _customerRepository.TemporaryRegisterCustomer(customer);
 
-        if (!result.Success) return this.RespondError(StatusCodes.Status400BadRequest, result.Message);
+        if (!result.Success) return this.RespondError(
+            StatusCodes.Status400BadRequest,
+            result.Message ?? "Customer registration failed.");
 
-        return this.Respond(result.Message, result.Data);
+        return this.Respond(result.Message ?? "Registration started.", result.Data!);
     }
 
     [HttpPost]
     [Route("[Controller]/CustomerLogin")]
-    public async Task<IActionResult> CustomerLoginAction([FromBody] UserLogin customer)
+    [AllowAnonymous]
+    [EnableRateLimiting("customer-auth")]
+    public async Task<IActionResult> CustomerLoginAction([FromBody] CustomerLoginRequest request)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
 
-        try
+        var result = await _customerRepository.StartCustomerLogin(request);
+        if (!result.Success)
         {
-            var user = await _userManager.Users.Include(x => x.SystemUser)
-                .FirstOrDefaultAsync(i => i.Email.Equals(customer.Username));
+            var statusCode = result.Errors.Contains("ACCOUNT_LOCKED")
+                ? StatusCodes.Status429TooManyRequests
+                : StatusCodes.Status401Unauthorized;
 
-            if (user is null) return this.RespondNotFound("Requested Customer Not Found");
-
-
-            if (!user.SystemUser.Role.Equals("Customer")) return this.RespondNotFound("User Found But Not a Customer Not Found");
-
-            var result = await _signInManager.CheckPasswordSignInAsync(user, customer.Password, false);
-
-            if (!result.Succeeded) return this.RespondError(StatusCodes.Status401Unauthorized, "Username not Found or incorrect password");
-
-            var customerInfo = await _customerRepository.FetchCustomerInfo(user.Email);
-
-            var response = new LoginResponse
-            {
-                Id = user.SystemUserId,
-                Username = user.UserName,
-                Email = user.Email,
-                Phone = user.PhoneNumber,
-                Details = customerInfo,
-                AccessToken = _tokenService.CreateToken(user)
-            };
-
-            return this.Respond("Customer logged in successfully", response);
+            return this.RespondError(statusCode, result.Message ?? "Unable to start customer login.");
         }
-        catch (Exception exception)
-        {
-            Log.Error("Failed to Login Customer {@exception}", exception);
-            throw new InvalidOperationException(exception.Message);
-        }
+
+        return this.Respond(result.Message ?? "Login code sent.", result.Data!);
+    }
+
+    [HttpPost]
+    [Route("[Controller]/VerifyLoginCode")]
+    [AllowAnonymous]
+    [EnableRateLimiting("customer-auth")]
+    public async Task<IActionResult> VerifyLoginCodeAction([FromBody] VerifyCodeRequest request)
+    {
+        if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
+
+        var result = await _customerRepository.VerifyCustomerLogin(request);
+        if (!result.Success)
+            return this.RespondError(
+                StatusCodes.Status401Unauthorized,
+                result.Message ?? result.Errors.FirstOrDefault() ?? "Login verification failed.");
+
+        return this.Respond(result.Message ?? "Customer logged in successfully.", result.Data!);
     }
 
     [HttpGet]
     [Route("[Controller]/FetchCustomers")]
+    [Authorize(Roles = "Administrator,Manager")]
     public async Task<IActionResult> FetchCustomersAction()
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
@@ -108,9 +94,13 @@ public class CustomerController : ControllerBase
 
     [HttpGet]
     [Route("[Controller]/FetchCustomerProfile/{customerId:guid}")]
+    [Authorize(Roles = "Customer")]
     public async Task<IActionResult> FetchCustomerProfileAction([FromRoute] Guid customerId)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
+
+        if (!TryGetCustomerId(out var authenticatedCustomerId) || authenticatedCustomerId != customerId)
+            return this.RespondError(StatusCodes.Status403Forbidden, "You cannot access another customer profile.");
 
         if (!await _customerRepository.CustomerExists(customerId)) return this.RespondNotFound($"Customer with id {customerId} not found");
 
@@ -171,35 +161,66 @@ public class CustomerController : ControllerBase
 
     [HttpPost]
     [Route("[Controller]/CheckSubscriptionStatus")]
+    [Authorize(Roles = "Customer")]
     public async Task<IActionResult> CheckCustomerSubAction([FromBody] CheckSubscription request)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
 
+        if (!TryGetCustomerId(out var customerId))
+            return this.RespondError(StatusCodes.Status401Unauthorized, "Customer identity is missing.");
+
+        request.CustomerId = customerId;
         var result = await _offerRepository.CheckSubscriptionStatus(request);
 
-        if (!result.Success) return this.RespondError(StatusCodes.Status400BadRequest, result.Message!);
+        if (!result.Success)
+            return this.RespondError(
+                StatusCodes.Status400BadRequest,
+                result.Message ?? result.Errors.FirstOrDefault() ?? "Unable to check subscription status.");
 
-        return this.Respond(result.Message!, result.Data);
+        return this.Respond(result.Message ?? "Subscription status checked.", result.Data);
     }
 
     [HttpPost]
     [Route("[Controller]/VerifyAuthCode")]
+    [AllowAnonymous]
+    [EnableRateLimiting("customer-auth")]
     public async Task<IActionResult> VerifyAuthCodeTask([FromBody] VerifyCodeRequest request)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
 
         var result = await _customerRepository.VerifyCustomerAccount(request);
 
-        if (!result.Success) return this.RespondError(StatusCodes.Status400BadRequest, result.Errors.FirstOrDefault()!);
+        if (!result.Success) return this.RespondError(
+            StatusCodes.Status400BadRequest,
+            result.Message ?? result.Errors.FirstOrDefault() ?? "Verification failed.");
 
-        return this.Respond(result.Message, result.Data);
+        return this.Respond(result.Message ?? "Account verified successfully.", result.Data!);
+    }
+
+    [HttpPost]
+    [Route("[Controller]/ResendAuthCode")]
+    [AllowAnonymous]
+    [EnableRateLimiting("customer-auth")]
+    public async Task<IActionResult> ResendAuthCodeTask([FromBody] ResendVerificationRequest request)
+    {
+        if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
+
+        var result = await _customerRepository.ResendVerificationCode(request);
+        if (!result.Success)
+            return this.RespondError(StatusCodes.Status400BadRequest, result.Message ?? "Unable to resend verification code.");
+
+        return this.Respond(result.Message!, result.Data!);
     }
 
     [HttpPost]
     [Route("[Controller]/CheckAccountCompletion/{customerId:guid}")]
+    [Authorize(Roles = "Customer")]
     public async Task<IActionResult> AccountCompleteTask([FromRoute] Guid customerId)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
+
+        if (!TryGetCustomerId(out var authenticatedCustomerId) || authenticatedCustomerId != customerId)
+            return this.RespondError(StatusCodes.Status403Forbidden, "You cannot access another customer account.");
 
         var request = await _customerRepository.AccountComplete(customerId);
 
@@ -210,14 +231,24 @@ public class CustomerController : ControllerBase
 
     [HttpPost]
     [Route("[Controller]/CompleteRegistration")]
+    [Authorize(Roles = "Customer")]
     public async Task<IActionResult> CompleteRegistrationTask([FromBody] CompleteRegistrationReq request)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
 
-        var response = await _customerRepository.CompleteRegistration(request);
+        var applicationUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(applicationUserId))
+            return this.RespondError(StatusCodes.Status401Unauthorized, "Customer identity is missing.");
 
-        if (!response.Success) return this.RespondError(StatusCodes.Status400BadRequest, "Customer Registration Failed");
+        var response = await _customerRepository.CompleteRegistration(applicationUserId, request);
 
-        return this.Respond("Registration Complete Successfully", response.Data.Id);
+        if (!response.Success) return this.RespondError(StatusCodes.Status400BadRequest, response.Message ?? "Customer registration failed.");
+
+        return this.Respond("Registration Complete Successfully", response.Data!.Id);
+    }
+
+    private bool TryGetCustomerId(out Guid customerId)
+    {
+        return Guid.TryParse(User.FindFirstValue("customer_id"), out customerId);
     }
 }

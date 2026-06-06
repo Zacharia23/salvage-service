@@ -36,6 +36,39 @@ public class ApplicationDbContext(DbContextOptions options) : IdentityDbContext<
     protected override void OnModelCreating(ModelBuilder builder)
     {
         builder.Entity<Customer>()
+            .HasOne(c => c.ApplicationUser)
+            .WithOne()
+            .HasForeignKey<Customer>(c => c.ApplicationUserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Entity<Customer>()
+            .HasIndex(c => c.ApplicationUserId)
+            .IsUnique();
+
+        builder.Entity<Customer>()
+            .HasIndex(c => c.Email)
+            .IsUnique();
+
+        builder.Entity<Customer>()
+            .HasIndex(c => c.Phone)
+            .IsUnique();
+
+        builder.Entity<SystemUser>()
+            .HasIndex(u => u.Email)
+            .IsUnique();
+
+        builder.Entity<SystemUser>()
+            .HasIndex(u => u.Phone)
+            .IsUnique();
+
+        builder.Entity<SystemUser>()
+            .HasIndex(u => u.Number)
+            .IsUnique();
+
+        builder.Entity<TempCustomer>()
+            .HasIndex(v => v.ApplicationUserId);
+
+        builder.Entity<Customer>()
             .HasOne(c => c.IdentityType)
             .WithMany(id => id.Customers)
             .HasForeignKey(c => c.IdentityTypeId)

@@ -563,9 +563,7 @@ public class OfferRepository : IOfferRepository
                 .OrderByDescending(x => x.CreatedDate)
                 .FirstOrDefaultAsync(x => x.CustomerId.Equals(request.CustomerId) && x.OfferId.Equals(request.OfferId) && x.IsActive.Equals(true));
 
-            if (sub == null) return ServiceResponse.Failure<bool>("No Offer Subscription Found", new List<string> { "OFFER_SUB_NOT_FOUND" });
-
-            if (!sub.IsActive) return ServiceResponse.Success(false, "No active subscription found");
+            if (sub == null) return ServiceResponse.Success(false, "No active subscription found");
 
             return ServiceResponse.Success(true, "Active Subscription Found");
         }
@@ -573,6 +571,32 @@ public class OfferRepository : IOfferRepository
         {
             Log.Error("Failed to check sub status => {@exception}", exception);
             return ServiceResponse.Failure<bool>("Failed to check sub status", new List<string> { exception.Message });
+        }
+    }
+
+    public async Task<ServiceResponse<OfferStatisticsResponse>> FetchStatistics()
+    {
+        try
+        {
+            var statistics = new OfferStatisticsResponse
+            {
+                TotalOffersCompleted = await _context.Offers.CountAsync(
+                    offer => offer.Status == StatusEnums.Completed),
+                VehiclesAvailable = await _context.Vehicles.CountAsync(
+                    vehicle => !vehicle.Reserved),
+                CustomersRegistered = await _context.Customers.CountAsync(),
+                TotalSuccessfulBids = await _context.Bids.CountAsync(
+                    bid => bid.Awarded)
+            };
+
+            return ServiceResponse.Success(statistics, "Offer statistics fetched successfully");
+        }
+        catch (Exception exception)
+        {
+            Log.Error(exception, "Failed to fetch offer statistics");
+            return ServiceResponse.Failure<OfferStatisticsResponse>(
+                "Failed to fetch offer statistics",
+                new List<string> { exception.Message });
         }
     }
 

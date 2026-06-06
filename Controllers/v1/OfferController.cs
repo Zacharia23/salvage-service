@@ -1,4 +1,6 @@
+using System.Security.Claims;
 using Asp.Versioning;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SalvageCore.DTOs.Offer.Request;
 using SalvageCore.Extensions;
@@ -21,6 +23,7 @@ public class OfferController : ControllerBase
 
     [HttpPost]
     [Route("[Controller]/CreateOffer")]
+    [Authorize(Roles = "Administrator,Manager")]
     public async Task<IActionResult> CreateOffers([FromBody] OfferRequest request)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
@@ -42,6 +45,21 @@ public class OfferController : ControllerBase
     }
 
     [HttpGet]
+    [Route("[Controller]/FetchStatistics")]
+    [AllowAnonymous]
+    public async Task<IActionResult> FetchStatisticsAction()
+    {
+        var result = await _offer.FetchStatistics();
+
+        if (!result.Success)
+            return this.RespondError(
+                StatusCodes.Status500InternalServerError,
+                result.Message ?? result.Errors.FirstOrDefault() ?? "Failed to fetch offer statistics.");
+
+        return this.Respond(result.Message ?? "Offer statistics fetched successfully", result.Data!);
+    }
+
+    [HttpGet]
     [Route("[Controller]/FetchOfferProfile/{offerId:guid}")]
     public async Task<IActionResult> FetchOfferDetails([FromRoute] Guid offerId)
     {
@@ -56,6 +74,7 @@ public class OfferController : ControllerBase
 
     [HttpPut]
     [Route("[Controller]/ExtendOffer")]
+    [Authorize(Roles = "Administrator,Manager")]
     public async Task<IActionResult> ExtendOfferAction([FromBody] ExtendRequest request)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
@@ -69,6 +88,7 @@ public class OfferController : ControllerBase
 
     [HttpPut]
     [Route("[Controller]/CompleteOffer/{offerId:guid}")]
+    [Authorize(Roles = "Administrator,Manager")]
     public async Task<IActionResult> CompleteOfferAction([FromRoute] Guid offerId)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
@@ -82,9 +102,15 @@ public class OfferController : ControllerBase
 
     [HttpPost]
     [Route("[Controller]/SubmitOfferBid")]
+    [Authorize(Roles = "Customer")]
     public async Task<IActionResult> SubmitOfferBid([FromBody] BidRequest request)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
+
+        if (!TryGetCustomerId(out var customerId))
+            return this.RespondError(StatusCodes.Status401Unauthorized, "Customer identity is missing.");
+
+        request.CustomerId = customerId;
 
         // Check Offer Details
         var offer = await _offer.FetchOfferDetails(request.OfferId);
@@ -106,6 +132,7 @@ public class OfferController : ControllerBase
 
     [HttpGet]
     [Route("[Controller]/FetchAllBids")]
+    [Authorize(Roles = "Administrator,Manager")]
     public async Task<IActionResult> FetchBidsAction()
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
@@ -117,6 +144,7 @@ public class OfferController : ControllerBase
 
     [HttpGet]
     [Route("[Controller]/FetchOfferBids/{offerId:guid}")]
+    [Authorize(Roles = "Administrator,Manager")]
     public async Task<IActionResult> FetchOfferBidsAction([FromRoute] Guid offerId)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
@@ -130,6 +158,7 @@ public class OfferController : ControllerBase
 
     [HttpPut]
     [Route("[Controller]/AwardCurrentBid/{bidId:guid}")]
+    [Authorize(Roles = "Administrator,Manager")]
     public async Task<IActionResult> AwardBidAction([FromRoute] Guid bidId)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
@@ -143,26 +172,38 @@ public class OfferController : ControllerBase
 
     [HttpPost]
     [Route("[Controller]/Subscribe")]
+    [Authorize(Roles = "Customer")]
     public async Task<IActionResult> SubscribeOfferAction([FromBody] SubscribeRequest request)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
 
+        if (!TryGetCustomerId(out var customerId))
+            return this.RespondError(StatusCodes.Status401Unauthorized, "Customer identity is missing.");
+
+        request.CustomerId = customerId;
         var response = await _offer.Subscribe(request);
 
-        if (!response.Success) this.RespondError(StatusCodes.Status500InternalServerError, response.Errors.FirstOrDefault()!);
+        if (!response.Success)
+            return this.RespondError(StatusCodes.Status400BadRequest, response.Message ?? "Unable to subscribe to offer.");
 
         return this.Respond(response.Message!, response.Data);
     }
 
     [HttpPost]
     [Route("[Controller]/Unsubscribe")]
+    [Authorize(Roles = "Customer")]
     public async Task<IActionResult> UnSubscribeOfferAction([FromBody] SubscribeRequest request)
     {
         if (!ModelState.IsValid) return this.RespondBadRequest(ModelState);
 
+        if (!TryGetCustomerId(out var customerId))
+            return this.RespondError(StatusCodes.Status401Unauthorized, "Customer identity is missing.");
+
+        request.CustomerId = customerId;
         var response = await _offer.Unsubscribe(request);
 
-        if (!response.Success) this.RespondError(StatusCodes.Status500InternalServerError, response.Errors.FirstOrDefault()!);
+        if (!response.Success)
+            return this.RespondError(StatusCodes.Status400BadRequest, response.Message ?? "Unable to unsubscribe from offer.");
 
         return this.Respond(response.Message!, response.Data);
     }
@@ -170,5 +211,10 @@ public class OfferController : ControllerBase
     private bool ValidateOffer(double initialPrice, double incrementPrice, decimal submittedAmount)
     {
         return submittedAmount > (decimal)initialPrice && (submittedAmount - (decimal)initialPrice) % (decimal)incrementPrice == 0;
+    }
+
+    private bool TryGetCustomerId(out Guid customerId)
+    {
+        return Guid.TryParse(User.FindFirstValue("customer_id"), out customerId);
     }
 }

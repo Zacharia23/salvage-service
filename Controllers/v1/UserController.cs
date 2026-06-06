@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SalvageCore.DTOs.User;
 using SalvageCore.DTOs.User.Request;
+using SalvageCore.Enums;
 using SalvageCore.Extensions;
 using SalvageCore.Interface;
 using SalvageCore.Models;
@@ -37,9 +38,10 @@ public class UserController : ControllerBase
 
         var response = await _userRepository.RegisterUser(user);
 
-        if (!response.Success) return this.RespondError(StatusCodes.Status400BadRequest, response.Errors.ToString());
+        if (!response.Success)
+            return this.RespondError(StatusCodes.Status400BadRequest, GetErrorMessage(response.Message, response.Errors));
 
-        return this.Respond(response.Message, response.Data);
+        return this.Respond(response.Message ?? "User created successfully.", response.Data!);
     }
 
     [HttpPost]
@@ -50,24 +52,36 @@ public class UserController : ControllerBase
 
         try
         {
+            var email = userLogin.Username.Trim().ToLowerInvariant();
             var user = await _userManager.Users
                 .Include(x => x.SystemUser)
-                .FirstOrDefaultAsync(i => i.Email.Equals(userLogin.Username.ToLower()));
+                .FirstOrDefaultAsync(i => i.NormalizedEmail == _userManager.NormalizeEmail(email));
 
-            if (user is null) return this.RespondNotFound($"User {userLogin.Username} not found");
+            if (user?.SystemUser is null ||
+                user.SystemUser.Role.Equals("Customer", StringComparison.OrdinalIgnoreCase))
+                return this.RespondError(StatusCodes.Status401Unauthorized, "Invalid credentials.");
 
-            var result = await _signInManager.CheckPasswordSignInAsync(user, userLogin.Password, false);
+            var result = await _signInManager.CheckPasswordSignInAsync(user, userLogin.Password, true);
 
-            if (!result.Succeeded) return this.RespondError(StatusCodes.Status401Unauthorized, "Username not Found or incorrect password");
+            if (result.IsLockedOut)
+                return this.RespondError(StatusCodes.Status429TooManyRequests, "Too many failed login attempts. Try again later.");
+
+            if (!result.Succeeded)
+                return this.RespondError(StatusCodes.Status401Unauthorized, "Invalid credentials.");
+
+            if (user.SystemUser.Status != StatusEnums.Active)
+                return this.RespondError(StatusCodes.Status403Forbidden, "User account is not active.");
 
             var response = new LoginResponse
             {
                 Id = user.SystemUserId,
                 Email = user.Email,
-                Username = user.UserName,
+                Username = user.SystemUser.Username,
                 Phone = user.PhoneNumber,
+                Role = user.SystemUser.Role,
                 Details = null,
-                AccessToken = _tokenService.CreateToken(user)
+                AccessToken = _tokenService.CreateToken(user),
+                ExpiresIn = _tokenService.AccessTokenLifetimeSeconds
             };
 
             return this.Respond("Login Success", response);
@@ -117,9 +131,10 @@ public class UserController : ControllerBase
 
         var result = await _userRepository.FetchUsers();
 
-        if (!result.Success) return this.RespondError(StatusCodes.Status400BadRequest, result.Errors.ToString());
+        if (!result.Success)
+            return this.RespondError(StatusCodes.Status400BadRequest, GetErrorMessage(result.Message, result.Errors));
 
-        return this.Respond(result.Message, result.Data);
+        return this.Respond(result.Message ?? "Users fetched successfully.", result.Data!);
     }
 
     [HttpGet]
@@ -130,8 +145,17 @@ public class UserController : ControllerBase
 
         var result = await _userRepository.FetchUserDetails(userId);
 
-        if (!result.Success) return this.RespondError(StatusCodes.Status400BadRequest, result.Errors.ToString());
+        if (!result.Success)
+            return this.RespondError(StatusCodes.Status400BadRequest, GetErrorMessage(result.Message, result.Errors));
 
-        return this.Respond(result.Message, result.Data);
+        return this.Respond(result.Message ?? "User profile fetched successfully.", result.Data!);
+    }
+
+    private static string GetErrorMessage(string? message, IEnumerable<string> errors)
+    {
+        var errorMessage = string.Join(", ", errors.Where(error => !string.IsNullOrWhiteSpace(error)));
+        return !string.IsNullOrWhiteSpace(errorMessage)
+            ? errorMessage
+            : message ?? "Request failed.";
     }
 }

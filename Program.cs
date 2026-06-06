@@ -1,8 +1,10 @@
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using Asp.Versioning;
 using EntityFramework.Exceptions.SqlServer;
 using Hangfire;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.FeatureManagement;
@@ -68,6 +70,20 @@ builder.Services.AddApiVersioning(options =>
 
 builder.Services.AddFeatureManagement();
 builder.Services.AddProblemDetails();
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddPolicy("customer-auth", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+});
 
 builder.Services.AddCors(options =>
 {
@@ -106,19 +122,19 @@ if (app.Environment.IsDevelopment())
 }
 
 // Middlewares Section
+app.UseForwardedHeaders();
 app.UseSerilogRequestLogging();
 app.UseStatusCodePages();
 app.UseGlobalErrorHandling();
 app.UseExceptionHandler();
 
 app.UseCors("GEN_SERVER");
-
-app.MapControllers();
-
+app.UseHttpsRedirection();
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.UseHttpsRedirection();
+app.MapControllers();
 app.UseHangfireDashboard();
 app.MapHangfireDashboard("/hangfire");
 
